@@ -68,10 +68,11 @@ if ($missingRoleNames -ne $null)
 
 		# jsonファイルの作成
 		$cloudbaseRoleFile = "$($missingRoleDefinition.Name).json"
-		write-host "Creating $cloudbaseRoleFile"
 
 		# 作成したJSONファイルに書き込み
 		Set-Content $cloudbaseRoleFile $($missingRoleDefinition | ConvertTo-Json)
+
+		Write-Host "JSON File for $roleName has been created!"
 
 		# 作成したJSONファイルからカスタムロール定義を作成
 		# 既に作成されていた場合はエラーになるため、ロールが存在しない場合のみ作成する
@@ -79,7 +80,7 @@ if ($missingRoleNames -ne $null)
 			New-AzRoleDefinition -InputFile ./$cloudbaseRoleFile
 		}
 		else{
-			Write-Host "Role Definition: $roleName has already existed!"
+			Write-Host "Custom Azure RBAC Role: $roleName has already existed!"
 		}
 		# カスタムロールの作成に時間がかかるので、作成したロールが使えるようになるまで待つ
 		# カスタムロールがAzure側に反映されるまで時間がかかる場合があるので、ここをループする
@@ -102,16 +103,26 @@ else
 # 剥奪するべきロールが存在する($needlessRoleNamesが$nullではない)場合
 if ($needlessRoleNames -ne $null)
 {
-	# 剥奪するべきロールの剥奪
-	# 最初にユーザーの入力で剥奪したロールの削除要否を確認する
+	# 剥奪するべきロール(組込み・カスタム)の剥奪
 	foreach($needlessRoleName in $needlessRoleNames){
 		Remove-AzRoleAssignment -ObjectId $cloudbaseAppSpObjId -RoleDefinitionName $needlessRoleName
+		
+		# ユーザーから不要なカスタムロールの削除確認に対して"yes"の入力があった場合
 		# 剥奪完了したロールの削除
-		# 削除するロールが他のプリンシパルに割り当てられていた場合は削除できないため、エラーハンドリング(未対応)
-		if($needlessRoleDeletionFlag && (Get-AzRoleDefinition -Name $needlessRoleName).IsCustom){
-			# -Forceを付けないとユーザーへの確認が求められる
-			Remove-AzRoleDefinition -Name $needlessRoleName -Force
-			Write-Host "Custom Azure RBAC Role: $needlessRoleName has been deleted!"
+		# 削除対象はカスタムロールのみ
+		if($needlessRoleDeletionFlag -and (Get-AzRoleDefinition -Name $needlessRoleName).IsCustom)
+		{
+			# 削除するロールが他のプリンシパルに割り当てられていない場合のみ削除する	
+			if(!(Get-AzRoleAssignment | Where-Object {$_.RoleDefinitionName -eq $needlessRoleName})) 
+			{
+				# -Forceを付けないとユーザーへの確認が求められる
+				Remove-AzRoleDefinition -Name $needlessRoleName -Force
+				Write-Host "Custom Azure RBAC Role: $needlessRoleName has been deleted!"
+			}
+			else
+			{
+				Write-Host "Custom Azure RBAC Role: $needlessRoleName cannot be deleted because it is still in use!"
+			}
 		}
 	}
 }
