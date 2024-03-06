@@ -1,8 +1,11 @@
 # Subscription ID はわかっている前提
 $subscriptionId = "42edd95d-ae8d-41c1-ac55-40bf336687b4"
 
-# サービスプリンシパル(権限付与する実体)のID は Cloudbase 側に共有されている
-$cloudbaseAppSpObjId = "22d729db-95de-4fd1-9d8d-dfe8d55e2fec"
+# Cloudbase はお客様テナントに登録されたアプリ登録のアプリケーション ID (クライアント ID )を知っている
+$cloudbaseAppRegistrationClientId = "eb1a9ab9-4ad1-46c1-b900-e529d612d4e8"
+
+# サービスプリンシパル(権限付与する実体)の ID は知らないので、アプリケーション ID から持ってくる
+$cloudbaseAppSpObjId = $(Get-AzADServicePrincipal -ApplicationId $cloudbaseAppRegistrationClientId).Id
 
 # 複数のロール定義を取得
 # アタッチしたいRBACロール定義を取得
@@ -42,7 +45,7 @@ Write-Host "Needless Roles: $needlessRoleNames"
 
 # 追加で割り当てるべきロールが存在する($missingRoleNamesが$nullではない)場合
 # 割り当てるべきRBACロール定義のURIを改めて取得
-if ($missingRoleNames -ne $null)
+if ($null -ne $missingRoleNames)
 {
 	$missingRoleURIs = @()
 	$missingRoleDefinitions = @()
@@ -66,31 +69,30 @@ if ($missingRoleNames -ne $null)
 		# ロール名の保持
 		$roleName = $missingRoleDefinition.Name
 
-		# jsonファイルの作成
-		$cloudbaseRoleFile = "$($missingRoleDefinition.Name).json"
-
-		# 作成したJSONファイルに書き込み
-		Set-Content $cloudbaseRoleFile $($missingRoleDefinition | ConvertTo-Json)
-
-		Write-Host "JSON File for $roleName has been created!"
-
 		# 作成したJSONファイルからカスタムロール定義を作成
 		# 既に作成されていた場合はエラーになるため、ロールが存在しない場合のみ作成する
 		if(!(Get-AzRoleDefinition -Name $roleName)){
+			# jsonファイルの作成
+			$cloudbaseRoleFile = "$($missingRoleDefinition.Name).json"
+
+			# 作成したJSONファイルに書き込み
+			Set-Content $cloudbaseRoleFile $($missingRoleDefinition | ConvertTo-Json)
+
+			Write-Host "JSON File for $roleName has been created!"
+			
 			New-AzRoleDefinition -InputFile ./$cloudbaseRoleFile
+			# カスタムロールの作成に時間がかかるので、作成したロールが使えるようになるまで待つ
+			# カスタムロールがAzure側に反映されるまで時間がかかる場合があるので、ここをループする
+			while(!(Get-AzRoleDefinition -Name $roleName)){
+				Write-Host "Creating Custom Azure RBAC Role: $roleName ..."
+				Start-Sleep -Seconds 3
+			}
+			Write-Host "Custom Azure RBAC Role: $roleName has been created!"
 		}
 		else{
 			Write-Host "Custom Azure RBAC Role: $roleName has already existed!"
 		}
-		# カスタムロールの作成に時間がかかるので、作成したロールが使えるようになるまで待つ
-		# カスタムロールがAzure側に反映されるまで時間がかかる場合があるので、ここをループする
-		while(!(Get-AzRoleDefinition -Name $roleName)){
-			Write-Host "Creating Custom Azure RBAC Role: $roleName ..."
-			Start-Sleep -Seconds 3
-		}
-		Write-Host "Custom Azure RBAC Role: $roleName has been created!"
-
-		# 作成完了したロールの割り当て
+		# ロールの割り当て
 		New-AzRoleAssignment -ObjectId $cloudbaseAppSpObjId -RoleDefinitionName $roleName -Scope "/subscriptions/$subscriptionId"
 		Write-Host "Custom Azure RBAC Role: $roleName has attached to $cloudbaseAppSpObjId !"
 	}
@@ -101,7 +103,7 @@ else
 }
 
 # 剥奪するべきロールが存在する($needlessRoleNamesが$nullではない)場合
-if ($needlessRoleNames -ne $null)
+if ($null -ne $needlessRoleNames)
 {
 	# 剥奪するべきロール(組込み・カスタム)の剥奪
 	foreach($needlessRoleName in $needlessRoleNames){
